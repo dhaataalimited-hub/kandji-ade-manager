@@ -24,7 +24,6 @@ export function AdeEditDialog({ device, open, onClose, onSaved }: Props) {
   const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
   const [blueprintId, setBlueprintId] = useState("");
   const [assetTag, setAssetTag] = useState("");
-  const [user, setUser] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,7 +31,6 @@ export function AdeEditDialog({ device, open, onClose, onSaved }: Props) {
     if (!open) return;
     setBlueprintId(device?.blueprint_id ?? "");
     setAssetTag(device?.asset_tag ?? "");
-    setUser(device?.user ?? "");
     setError(null);
     getBlueprints()
       .then((d) => setBlueprints(d))
@@ -47,7 +45,6 @@ export function AdeEditDialog({ device, open, onClose, onSaved }: Props) {
       const updated = await updateAdeDevice(device.device_id, {
         blueprintId: blueprintId || undefined,
         assetTag: assetTag || undefined,
-        user: user || undefined,
       });
       onSaved(updated);
     } catch (e: unknown) {
@@ -89,16 +86,6 @@ export function AdeEditDialog({ device, open, onClose, onSaved }: Props) {
               value={assetTag}
               onChange={(e) => setAssetTag(e.target.value)}
               placeholder="e.g. IT-0042"
-              className="h-9 text-sm"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <Label className="text-xs">Assigned User</Label>
-            <Input
-              value={user}
-              onChange={(e) => setUser(e.target.value)}
-              placeholder="e.g. jane@company.com"
               className="h-9 text-sm"
             />
           </div>

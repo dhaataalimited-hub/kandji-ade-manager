@@ -10,7 +10,6 @@ use serde_json::Value;
 pub struct AdeToken {
     pub id: String,
     pub server_name: Option<String>,
-    pub mdm_server_name: Option<String>,
     pub access_token_expiry: Option<String>,
     pub days_left: Option<i64>,
     pub device_count: Option<i64>,
@@ -18,19 +17,32 @@ pub struct AdeToken {
     pub blueprint_name: Option<String>,
     pub email: Option<String>,
     pub phone: Option<String>,
-    pub last_modified: Option<String>,
+    pub last_device_sync: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AdeDevice {
     pub device_id: String,
+    pub name: Option<String>,
     pub serial_number: Option<String>,
     pub model: Option<String>,
+    pub device_family: Option<String>,
+    pub os: Option<String>,
+    pub profile_status: Option<String>,
     pub asset_tag: Option<String>,
     pub description: Option<String>,
     pub blueprint_id: Option<String>,
     pub user: Option<String>,
     pub color: Option<String>,
+}
+
+/// One page of an ADE token's devices plus pagination metadata.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AdeDevicePage {
+    pub devices: Vec<AdeDevice>,
+    pub page: u32,
+    pub total_pages: u32,
+    pub total_count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -83,81 +95,75 @@ fn parse_ade_token(v: &Value) -> AdeToken {
         .and_then(|x| x.as_i64())
         .or_else(|| compute_days_left(expiry.as_deref()));
 
+    let str_at = |path: &[&str]| -> Option<String> {
+        let mut cur = v;
+        for key in path {
+            cur = cur.get(*key)?;
+        }
+        cur.as_str().map(|s| s.to_string())
+    };
+
     AdeToken {
         id: v
             .get("id")
             .and_then(|x| x.as_str())
             .unwrap_or_default()
             .to_string(),
-        server_name: v
-            .get("server_name")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        mdm_server_name: v
-            .get("mdm_server_name")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
+        server_name: str_at(&["server_name"]),
         access_token_expiry: expiry,
         days_left,
-        device_count: v.get("device_count").and_then(|x| x.as_i64()),
-        blueprint_id: v
-            .get("blueprint_id")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        blueprint_name: v
-            .get("blueprint_name")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        email: v
-            .get("email")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        phone: v
-            .get("phone")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        last_modified: v
-            .get("last_modified")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
+        // device_counts: { total: N, iPad: …, AppleTV: … }
+        device_count: v
+            .get("device_counts")
+            .and_then(|c| c.get("total"))
+            .and_then(|x| x.as_i64()),
+        // blueprint: { id, name, … }
+        blueprint_id: str_at(&["blueprint", "id"]),
+        blueprint_name: str_at(&["blueprint", "name"]),
+        // defaults.email is what's used for new enrollments; admin_id is who uploaded the token
+        email: str_at(&["defaults", "email"]).or_else(|| str_at(&["admin_id"])),
+        phone: str_at(&["defaults", "phone"]).or_else(|| str_at(&["org_phone"])),
+        last_device_sync: str_at(&["last_device_sync"]),
     }
 }
 
 fn parse_ade_device(v: &Value) -> AdeDevice {
+    let str_field = |key: &str| -> Option<String> {
+        v.get(key).and_then(|x| x.as_str()).map(|s| s.to_string())
+    };
+
     AdeDevice {
+        // The device's own field name is `id`, not `device_id`.
         device_id: v
-            .get("device_id")
+            .get("id")
+            .or_else(|| v.get("device_id"))
             .and_then(|x| x.as_str())
             .unwrap_or_default()
             .to_string(),
-        serial_number: v
-            .get("serial_number")
+        // Device name lives on the nested mdm_device object (may be null).
+        name: v
+            .get("mdm_device")
+            .and_then(|d| d.get("name"))
             .and_then(|x| x.as_str())
             .map(|s| s.to_string()),
-        model: v
-            .get("model")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        asset_tag: v
-            .get("asset_tag")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        description: v
-            .get("description")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        blueprint_id: v
-            .get("blueprint_id")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
+        serial_number: str_field("serial_number"),
+        model: str_field("model"),
+        device_family: str_field("device_family"),
+        os: str_field("os"),
+        profile_status: str_field("profile_status"),
+        asset_tag: str_field("asset_tag"),
+        description: str_field("description"),
+        blueprint_id: str_field("blueprint_id"),
+        // `user` / `user_id` is a numeric user ID (or null), not a string.
         user: v
-            .get("user")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        color: v
-            .get("color")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
+            .get("user_id")
+            .or_else(|| v.get("user"))
+            .and_then(|x| {
+                x.as_i64()
+                    .map(|n| n.to_string())
+                    .or_else(|| x.as_str().map(|s| s.to_string()))
+            }),
+        color: str_field("color"),
     }
 }
 
@@ -338,45 +344,95 @@ pub async fn renew_ade_token(
     Ok(parse_ade_token(&body))
 }
 
-/// List devices for a given ADE token with page-based pagination.
+/// The devices endpoint (Quirk 10) returns a fixed maximum of 300 devices per
+/// page and accepts only the `page` param — page size is not modifiable.
+const DEVICE_PAGE_SIZE: i64 = 300;
+
+/// Fetch a single page of an ADE token's devices, lazily (one page per call).
+/// Returns the page's devices plus pagination metadata so the UI can render a
+/// page selector without loading every page up front.
 #[tauri::command]
-pub async fn list_ade_token_devices(ade_id: String) -> Result<Vec<AdeDevice>, String> {
+pub async fn list_ade_token_devices(ade_id: String, page: u32) -> Result<AdeDevicePage, String> {
     let creds = get_stored_creds()?;
     let token = get_stored_token()?;
     let client = build_client(&token).map_err(|e| e.to_string())?;
     let base = get_base_url(&creds.subdomain, &creds.region);
 
-    let mut all_devices: Vec<AdeDevice> = vec![];
-    let mut page = 1u32;
+    let page = page.max(1);
+    let res = client
+        .get(format!(
+            "{}/integrations/apple/ade/{}/devices?page={}",
+            base, ade_id, page
+        ))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
 
-    loop {
-        let res = client
-            .get(format!(
-                "{}/integrations/apple/ade/{}/devices?page={}",
-                base, ade_id, page
-            ))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        if !res.status().is_success() {
-            let status = res.status().as_u16();
-            let body = res.text().await.unwrap_or_default();
-            return Err(format!("HTTP {}: {}", status, body));
-        }
-
-        let body: Value = res.json().await.map_err(|e| e.to_string())?;
-        let items = normalize_list(body);
-
-        if items.is_empty() {
-            break;
-        }
-
-        all_devices.extend(items.iter().map(parse_ade_device));
-        page += 1;
+    if !res.status().is_success() {
+        let status = res.status().as_u16();
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status, body));
     }
 
-    Ok(all_devices)
+    let body: Value = res.json().await.map_err(|e| e.to_string())?;
+    // DRF envelope: `count` is the total across all pages.
+    let total_count = body.get("count").and_then(|c| c.as_i64()).unwrap_or(0);
+    let total_pages = if total_count <= 0 {
+        1
+    } else {
+        (((total_count + DEVICE_PAGE_SIZE - 1) / DEVICE_PAGE_SIZE) as u32).max(1)
+    };
+    let items = normalize_list(body);
+    let devices = items.iter().map(parse_ade_device).collect();
+
+    Ok(AdeDevicePage {
+        devices,
+        page,
+        total_pages,
+        total_count,
+    })
+}
+
+/// Search ADE devices by serial number via the tenant-wide devices endpoint
+/// (`/integrations/apple/ade/devices?serial_number=…`). Same device shape as the
+/// per-token list, so parse_ade_device applies unchanged. Results are filtered
+/// to `ade_id` (the token the search was run from) by matching `dep_account.id`,
+/// so only devices belonging to that token are returned.
+#[tauri::command]
+pub async fn search_ade_devices_by_serial(
+    serial: String,
+    ade_id: String,
+) -> Result<Vec<AdeDevice>, String> {
+    let creds = get_stored_creds()?;
+    let token = get_stored_token()?;
+    let client = build_client(&token).map_err(|e| e.to_string())?;
+    let base = get_base_url(&creds.subdomain, &creds.region);
+
+    let res = client
+        .get(format!("{}/integrations/apple/ade/devices", base))
+        .query(&[("serial_number", serial.trim())])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        let status = res.status().as_u16();
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status, body));
+    }
+
+    let body: Value = res.json().await.map_err(|e| e.to_string())?;
+    let items = normalize_list(body);
+    Ok(items
+        .iter()
+        .filter(|v| {
+            v.get("dep_account")
+                .and_then(|d| d.get("id"))
+                .and_then(|x| x.as_str())
+                == Some(ade_id.as_str())
+        })
+        .map(parse_ade_device)
+        .collect())
 }
 
 /// Get all blueprints for UUID → name resolution.
