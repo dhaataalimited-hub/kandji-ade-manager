@@ -31,6 +31,7 @@ interface TokenWithDevices extends AdeToken {
   expanded: boolean;
   devices: AdeDevice[] | null;
   devicesLoading: boolean;
+  devicesError: string | null;
 }
 
 function expiryBadge(daysLeft?: number) {
@@ -66,6 +67,18 @@ function resolveBlueprintName(
   return blueprintMap.get(blueprintId) ?? shortenUuid(blueprintId);
 }
 
+function profileStatusBadge(status?: string) {
+  if (!status) return <span className="text-gray-400">—</span>;
+  const s = status.toLowerCase();
+  const classes =
+    s === "pushed"
+      ? "bg-green-100 text-green-700 border-green-200"
+      : s === "assigned"
+        ? "bg-blue-100 text-blue-700 border-blue-200"
+        : "bg-gray-100 text-gray-600 border-gray-200";
+  return <Badge className={classes}>{status}</Badge>;
+}
+
 export default function AdeTokensPage() {
   const [tokens, setTokens] = useState<TokenWithDevices[]>([]);
   const [blueprintMap, setBlueprintMap] = useState<Map<string, string>>(
@@ -96,6 +109,7 @@ export default function AdeTokensPage() {
             expanded: false,
             devices: null,
             devicesLoading: false,
+            devicesError: null,
           }))
         );
       })
@@ -130,7 +144,9 @@ export default function AdeTokensPage() {
     }
     setTokens((prev) =>
       prev.map((t, i) =>
-        i === idx ? { ...t, expanded: true, devicesLoading: true } : t
+        i === idx
+          ? { ...t, expanded: true, devicesLoading: true, devicesError: null }
+          : t
       )
     );
     try {
@@ -142,14 +158,18 @@ export default function AdeTokensPage() {
                 ...t,
                 devices: Array.isArray(data) ? data : [],
                 devicesLoading: false,
+                devicesError: null,
               }
             : t
         )
       );
-    } catch {
+    } catch (e: unknown) {
+      const message = typeof e === "string" ? e : (e as Error).message;
       setTokens((prev) =>
         prev.map((t, i) =>
-          i === idx ? { ...t, devices: [], devicesLoading: false } : t
+          i === idx
+            ? { ...t, devices: [], devicesLoading: false, devicesError: message }
+            : t
         )
       );
     }
@@ -356,16 +376,24 @@ export default function AdeTokensPage() {
                       <Loader2 className="w-4 h-4 animate-spin" />
                       Loading devices…
                     </div>
+                  ) : token.devicesError ? (
+                    <div className="px-4 py-6">
+                      <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2 whitespace-pre-wrap break-words">
+                        Failed to load devices: {token.devicesError}
+                      </p>
+                    </div>
                   ) : token.devices && token.devices.length > 0 ? (
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="bg-gray-50">
                             {[
+                              "Device Name",
                               "Serial",
                               "Model",
+                              "Type",
                               "Asset Tag",
-                              "User",
+                              "Profile Status",
                               "Blueprint",
                               "",
                             ].map((h) => (
@@ -384,6 +412,9 @@ export default function AdeTokensPage() {
                               key={device.device_id}
                               className="border-t border-gray-100 hover:bg-gray-50 transition-colors"
                             >
+                              <td className="px-4 py-3 text-sm text-gray-700">
+                                {device.name ?? "—"}
+                              </td>
                               <td className="px-4 py-3">
                                 <span className="font-mono text-xs text-gray-500">
                                   {device.serial_number}
@@ -392,11 +423,19 @@ export default function AdeTokensPage() {
                               <td className="px-4 py-3 text-sm text-gray-700">
                                 {device.model ?? "—"}
                               </td>
+                              <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                {device.device_family ?? "—"}
+                                {device.os && (
+                                  <span className="block text-[10px] text-gray-400">
+                                    {device.os}
+                                  </span>
+                                )}
+                              </td>
                               <td className="px-4 py-3 text-xs text-gray-500">
                                 {device.asset_tag || "—"}
                               </td>
-                              <td className="px-4 py-3 text-xs text-gray-500">
-                                {device.user || "—"}
+                              <td className="px-4 py-3">
+                                {profileStatusBadge(device.profile_status)}
                               </td>
                               <td className="px-4 py-3 text-xs text-gray-500">
                                 {resolveBlueprintName(

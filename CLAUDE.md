@@ -137,6 +137,10 @@ Quirks 1–8 come from the original `ADE-API-QUIRKS.md` reference doc. Quirk 9 w
    - `blueprint_id` / `blueprint_name` ← `blueprint.id` / `blueprint.name` (nested object — **not** flat `blueprint_id`)
    - `email` ← `defaults.email` (fallback `admin_id`); `phone` ← `defaults.phone` (fallback `org_phone`)
    - `last_device_sync` is the real field name — there is no `last_modified`, and `mdm_server_name` doesn't exist (use `server_name`)
+10. **Device list uses DRF page pagination** on `GET /integrations/apple/ade/{id}/devices?page=N` (envelope: `count`/`next`/`previous`/`results`). `list_ade_token_devices` must **stop when `next` is null** — requesting a page past the last returns **HTTP 404 "Invalid page."**, not an empty page (a loop-until-empty would 404 and discard all fetched devices). `parse_ade_device` also reads:
+   - `device_id` ← `id` (the device's own field is `id`, **not** `device_id`) — needed for the edit PATCH URL
+   - `name` ← `mdm_device.name` (nested object, may be null)
+   - `user` ← numeric `user_id`/`user` (an integer id, **not** a string; no name/email in this payload — the UI leaves the user column out)
 
 ---
 

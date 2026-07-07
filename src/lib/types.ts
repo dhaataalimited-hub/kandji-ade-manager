@@ -13,8 +13,12 @@ export interface AdeToken {
 
 export interface AdeDevice {
   device_id: string;
+  name?: string;
   serial_number?: string;
   model?: string;
+  device_family?: string;
+  os?: string;
+  profile_status?: string;
   asset_tag?: string;
   description?: string;
   blueprint_id?: string;

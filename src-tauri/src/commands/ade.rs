@@ -23,8 +23,12 @@ pub struct AdeToken {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AdeDevice {
     pub device_id: String,
+    pub name: Option<String>,
     pub serial_number: Option<String>,
     pub model: Option<String>,
+    pub device_family: Option<String>,
+    pub os: Option<String>,
+    pub profile_status: Option<String>,
     pub asset_tag: Option<String>,
     pub description: Option<String>,
     pub blueprint_id: Option<String>,
@@ -115,40 +119,42 @@ fn parse_ade_token(v: &Value) -> AdeToken {
 }
 
 fn parse_ade_device(v: &Value) -> AdeDevice {
+    let str_field = |key: &str| -> Option<String> {
+        v.get(key).and_then(|x| x.as_str()).map(|s| s.to_string())
+    };
+
     AdeDevice {
+        // The device's own field name is `id`, not `device_id`.
         device_id: v
-            .get("device_id")
+            .get("id")
+            .or_else(|| v.get("device_id"))
             .and_then(|x| x.as_str())
             .unwrap_or_default()
             .to_string(),
-        serial_number: v
-            .get("serial_number")
+        // Device name lives on the nested mdm_device object (may be null).
+        name: v
+            .get("mdm_device")
+            .and_then(|d| d.get("name"))
             .and_then(|x| x.as_str())
             .map(|s| s.to_string()),
-        model: v
-            .get("model")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        asset_tag: v
-            .get("asset_tag")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        description: v
-            .get("description")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        blueprint_id: v
-            .get("blueprint_id")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
+        serial_number: str_field("serial_number"),
+        model: str_field("model"),
+        device_family: str_field("device_family"),
+        os: str_field("os"),
+        profile_status: str_field("profile_status"),
+        asset_tag: str_field("asset_tag"),
+        description: str_field("description"),
+        blueprint_id: str_field("blueprint_id"),
+        // `user` / `user_id` is a numeric user ID (or null), not a string.
         user: v
-            .get("user")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        color: v
-            .get("color")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
+            .get("user_id")
+            .or_else(|| v.get("user"))
+            .and_then(|x| {
+                x.as_i64()
+                    .map(|n| n.to_string())
+                    .or_else(|| x.as_str().map(|s| s.to_string()))
+            }),
+        color: str_field("color"),
     }
 }
 
@@ -357,6 +363,9 @@ pub async fn list_ade_token_devices(ade_id: String) -> Result<Vec<AdeDevice>, St
         }
 
         let body: Value = res.json().await.map_err(|e| e.to_string())?;
+        // Quirk 10: DRF page pagination. Stop when `next` is null — requesting a
+        // page past the last returns HTTP 404 "Invalid page.", not an empty page.
+        let has_next = body.get("next").map(|n| !n.is_null()).unwrap_or(false);
         let items = normalize_list(body);
 
         if items.is_empty() {
@@ -364,6 +373,10 @@ pub async fn list_ade_token_devices(ade_id: String) -> Result<Vec<AdeDevice>, St
         }
 
         all_devices.extend(items.iter().map(parse_ade_device));
+
+        if !has_next {
+            break;
+        }
         page += 1;
     }
 
