@@ -114,22 +114,20 @@ function FileDropZone({
   );
 }
 
-// ─── Shared: optional blueprint / phone / email fields ────────────────────────
+// ─── Shared: blueprint / phone / email fields (required by the API) ───────────
 
-interface OptionalFields {
+interface TokenSettings {
   blueprintId: string;
   phone: string;
   email: string;
 }
 
-function OptionalFieldsSection({
+function SettingsSection({
   fields,
   onChange,
-  defaultOpen = false,
 }: {
-  fields: OptionalFields;
-  onChange: (f: OptionalFields) => void;
-  defaultOpen?: boolean;
+  fields: TokenSettings;
+  onChange: (f: TokenSettings) => void;
 }) {
   const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
 
@@ -140,13 +138,8 @@ function OptionalFieldsSection({
   }, []);
 
   return (
-    <details className="group" open={defaultOpen}>
-      <summary className="text-xs font-medium text-gray-500 cursor-pointer hover:text-gray-800 select-none list-none flex items-center gap-1.5">
-        <span className="inline-block transition-transform group-open:rotate-90">
-          ▶
-        </span>
-        Optional settings (blueprint, phone, email)
-      </summary>
+    <div>
+      <p className="text-xs font-medium text-gray-500 select-none">Settings</p>
       <div className="mt-3 grid grid-cols-2 gap-2.5">
         <div className="col-span-2 space-y-1">
           <Label className="text-xs">Blueprint</Label>
@@ -157,7 +150,7 @@ function OptionalFieldsSection({
               onChange({ ...fields, blueprintId: e.target.value })
             }
           >
-            <option value="">— Default (leave blank) —</option>
+            <option value="">— Select a Blueprint —</option>
             {blueprints.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
@@ -189,7 +182,7 @@ function OptionalFieldsSection({
           />
         </div>
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -275,7 +268,7 @@ function AddNewTokenWizard({
   const [pemDownloaded, setPemDownloaded] = useState(false);
   const [pemError, setPemError] = useState<string | null>(null);
   const [p7mFile, setP7mFile] = useState<File | null>(null);
-  const [fields, setFields] = useState<OptionalFields>({
+  const [fields, setFields] = useState<TokenSettings>({
     blueprintId: "",
     phone: "",
     email: "",
@@ -460,7 +453,7 @@ function AddNewTokenWizard({
                 onFile={setP7mFile}
                 onClear={() => setP7mFile(null)}
               />
-              <OptionalFieldsSection fields={fields} onChange={setFields} />
+              <SettingsSection fields={fields} onChange={setFields} />
               {error && (
                 <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2 whitespace-pre-wrap break-words">
                   {error}
@@ -521,7 +514,7 @@ function RenewTokenWizard({
 }) {
   const [step, setStep] = useState(0);
   const [p7mFile, setP7mFile] = useState<File | null>(null);
-  const [fields, setFields] = useState<OptionalFields>({
+  const [fields, setFields] = useState<TokenSettings>({
     blueprintId: initialBlueprintId,
     phone: initialPhone,
     email: initialEmail,
@@ -634,11 +627,7 @@ function RenewTokenWizard({
                 onFile={setP7mFile}
                 onClear={() => setP7mFile(null)}
               />
-              <OptionalFieldsSection
-                fields={fields}
-                onChange={setFields}
-                defaultOpen
-              />
+              <SettingsSection fields={fields} onChange={setFields} />
               {error && (
                 <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2 whitespace-pre-wrap break-words">
                   {error}
