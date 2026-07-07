@@ -393,6 +393,48 @@ pub async fn list_ade_token_devices(ade_id: String, page: u32) -> Result<AdeDevi
     })
 }
 
+/// Search ADE devices by serial number via the tenant-wide devices endpoint
+/// (`/integrations/apple/ade/devices?serial_number=…`). Same device shape as the
+/// per-token list, so parse_ade_device applies unchanged. Results are filtered
+/// to `ade_id` (the token the search was run from) by matching `dep_account.id`,
+/// so only devices belonging to that token are returned.
+#[tauri::command]
+pub async fn search_ade_devices_by_serial(
+    serial: String,
+    ade_id: String,
+) -> Result<Vec<AdeDevice>, String> {
+    let creds = get_stored_creds()?;
+    let token = get_stored_token()?;
+    let client = build_client(&token).map_err(|e| e.to_string())?;
+    let base = get_base_url(&creds.subdomain, &creds.region);
+
+    let res = client
+        .get(format!("{}/integrations/apple/ade/devices", base))
+        .query(&[("serial_number", serial.trim())])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        let status = res.status().as_u16();
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status, body));
+    }
+
+    let body: Value = res.json().await.map_err(|e| e.to_string())?;
+    let items = normalize_list(body);
+    Ok(items
+        .iter()
+        .filter(|v| {
+            v.get("dep_account")
+                .and_then(|d| d.get("id"))
+                .and_then(|x| x.as_str())
+                == Some(ade_id.as_str())
+        })
+        .map(parse_ade_device)
+        .collect())
+}
+
 /// Get all blueprints for UUID → name resolution.
 #[tauri::command]
 pub async fn get_blueprints() -> Result<Vec<Blueprint>, String> {

@@ -87,6 +87,13 @@ export function listAdeTokenDevices(
   return invoke<AdeDevicePage>("list_ade_token_devices", { adeId, page });
 }
 
+export function searchAdeDevicesBySerial(
+  serial: string,
+  adeId: string
+): Promise<AdeDevice[]> {
+  return invoke<AdeDevice[]>("search_ade_devices_by_serial", { serial, adeId });
+}
+
 export function getBlueprints(): Promise<Blueprint[]> {
   return invoke<Blueprint[]>("get_blueprints");
 }
