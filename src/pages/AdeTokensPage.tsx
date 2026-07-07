@@ -153,7 +153,7 @@ export default function AdeTokensPage() {
   };
 
   const handleDeleteToken = async (token: TokenWithDevices) => {
-    const name = token.server_name ?? token.mdm_server_name ?? token.id;
+    const name = token.server_name ?? token.id;
     const confirmed = await ask(
       `Are you sure you want to remove the ADE token "${name}"?\n\nThis will delete the integration from Iru. Enrolled devices will not be affected.`,
       { title: "Remove ADE Token", kind: "warning" }
@@ -259,7 +259,7 @@ export default function AdeTokensPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="font-semibold text-gray-900">
-                      {token.server_name ?? token.mdm_server_name ?? token.id}
+                      {token.server_name ?? token.id}
                     </h3>
                     {expiryBadge(token.days_left)}
                   </div>
@@ -268,10 +268,10 @@ export default function AdeTokensPage() {
                       <Monitor className="w-3 h-3" />
                       {token.device_count ?? 0} devices
                     </span>
-                    {token.last_modified && (
+                    {token.last_device_sync && (
                       <span className="flex items-center gap-1 text-xs text-gray-500">
                         <RefreshCw className="w-3 h-3" />
-                        Modified {formatRelativeDate(token.last_modified)}
+                        Last sync {formatRelativeDate(token.last_device_sync)}
                       </span>
                     )}
                     {token.access_token_expiry && (
@@ -308,10 +308,7 @@ export default function AdeTokensPage() {
                     onClick={() =>
                       setRenewTarget({
                         id: token.id,
-                        name:
-                          token.server_name ??
-                          token.mdm_server_name ??
-                          token.id,
+                        name: token.server_name ?? token.id,
                       })
                     }
                     className={

@@ -10,7 +10,6 @@ use serde_json::Value;
 pub struct AdeToken {
     pub id: String,
     pub server_name: Option<String>,
-    pub mdm_server_name: Option<String>,
     pub access_token_expiry: Option<String>,
     pub days_left: Option<i64>,
     pub device_count: Option<i64>,
@@ -18,7 +17,7 @@ pub struct AdeToken {
     pub blueprint_name: Option<String>,
     pub email: Option<String>,
     pub phone: Option<String>,
-    pub last_modified: Option<String>,
+    pub last_device_sync: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -83,43 +82,35 @@ fn parse_ade_token(v: &Value) -> AdeToken {
         .and_then(|x| x.as_i64())
         .or_else(|| compute_days_left(expiry.as_deref()));
 
+    let str_at = |path: &[&str]| -> Option<String> {
+        let mut cur = v;
+        for key in path {
+            cur = cur.get(*key)?;
+        }
+        cur.as_str().map(|s| s.to_string())
+    };
+
     AdeToken {
         id: v
             .get("id")
             .and_then(|x| x.as_str())
             .unwrap_or_default()
             .to_string(),
-        server_name: v
-            .get("server_name")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        mdm_server_name: v
-            .get("mdm_server_name")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
+        server_name: str_at(&["server_name"]),
         access_token_expiry: expiry,
         days_left,
-        device_count: v.get("device_count").and_then(|x| x.as_i64()),
-        blueprint_id: v
-            .get("blueprint_id")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        blueprint_name: v
-            .get("blueprint_name")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        email: v
-            .get("email")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        phone: v
-            .get("phone")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        last_modified: v
-            .get("last_modified")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
+        // device_counts: { total: N, iPad: …, AppleTV: … }
+        device_count: v
+            .get("device_counts")
+            .and_then(|c| c.get("total"))
+            .and_then(|x| x.as_i64()),
+        // blueprint: { id, name, … }
+        blueprint_id: str_at(&["blueprint", "id"]),
+        blueprint_name: str_at(&["blueprint", "name"]),
+        // defaults.email is what's used for new enrollments; admin_id is who uploaded the token
+        email: str_at(&["defaults", "email"]).or_else(|| str_at(&["admin_id"])),
+        phone: str_at(&["defaults", "phone"]).or_else(|| str_at(&["org_phone"])),
+        last_device_sync: str_at(&["last_device_sync"]),
     }
 }
 

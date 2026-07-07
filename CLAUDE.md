@@ -5,7 +5,7 @@
 A standalone macOS app (Tauri 2.0 + React/TypeScript) that lets IT admins manage Iru ADE (Automated Device Enrollment) tokens without needing any developer tooling. Drag `.app` to Applications and go.
 
 **Source of original API knowledge:** a private reference repo (not committed here) containing:
-- `ADE-API-QUIRKS.md` — 8 critical API quirks encoded in Rust
+- `ADE-API-QUIRKS.md` — 8 critical API quirks encoded in Rust (a 9th was added later from live-tenant testing; see API Quirks section)
 - `ADE-MANAGER-PRD.md` — product requirements
 - `kandji.ts`, `page.tsx`, `AdeTokenUploadDialog.tsx` — original Next.js components this was adapted from
 
@@ -24,7 +24,7 @@ A standalone macOS app (Tauri 2.0 + React/TypeScript) that lets IT admins manage
 - ✅ Renew token — 2-step wizard: ABM instructions → upload `.p7m`
 - ✅ Remove token — native confirm dialog (`ask()`) → delete integration
 - ✅ Edit ADE device — blueprint / asset tag / user via PATCH
-- ✅ All 8 API quirks from `ADE-API-QUIRKS.md` encoded in Rust (`src-tauri/src/commands/ade.rs`)
+- ✅ All 8 API quirks from `ADE-API-QUIRKS.md` (plus a 9th, discovered live: nested fields on the list endpoint) encoded in Rust (`src-tauri/src/commands/ade.rs`)
 
 ### What's pending
 - ✅ Tested, on live Iru — end to end. May 2026.
@@ -122,7 +122,7 @@ All commands registered in `src-tauri/src/lib.rs` and called from `src/api/kandj
 
 ## API Quirks Encoded in Rust (DO NOT REGRESS)
 
-All 8 quirks from the original `ADE-API-QUIRKS.md` reference doc are encoded in `src-tauri/src/commands/ade.rs`:
+Quirks 1–8 come from the original `ADE-API-QUIRKS.md` reference doc. Quirk 9 was discovered against a live tenant in v0.1.0 and is not in that doc. All are encoded in `src-tauri/src/commands/ade.rs`:
 
 1. **Trailing slashes required** on all ADE endpoints (`/ade/`, `/ade/{id}/`)
 2. **Public key path**: `/public_key/` — underscore, not hyphen
@@ -132,6 +132,11 @@ All 8 quirks from the original `ADE-API-QUIRKS.md` reference doc are encoded in 
 6. **`days_left` may be absent**: computed from `access_token_expiry` via `compute_days_left()`
 7. **Error 2002** is a catch-all — raw body surfaced; renew path gives specific "single-use token" message
 8. **`.p7m` tokens are single-use** — documented in UI warning; error 2002 on renew = must redownload from ABM
+9. **Per-token fields are nested, not flat** on `GET /integrations/apple/ade/`. `parse_ade_token` reads:
+   - `device_count` ← `device_counts.total` (object with `total`/`iPad`/`AppleTV`/… — **not** a flat `device_count` int)
+   - `blueprint_id` / `blueprint_name` ← `blueprint.id` / `blueprint.name` (nested object — **not** flat `blueprint_id`)
+   - `email` ← `defaults.email` (fallback `admin_id`); `phone` ← `defaults.phone` (fallback `org_phone`)
+   - `last_device_sync` is the real field name — there is no `last_modified`, and `mdm_server_name` doesn't exist (use `server_name`)
 
 ---
 
@@ -158,7 +163,7 @@ pnpm tauri build --target universal-apple-darwin
 ### Build artifacts
 After `pnpm tauri build`:
 - `src-tauri/target/release/bundle/macos/Iru ADE Manager.app` — signed + notarized + stapled
-- `src-tauri/target/release/bundle/dmg/Iru ADE Manager_0.1.0_aarch64.dmg` — signed (DMG-level staple is a separate step, see below)
+- `src-tauri/target/release/bundle/dmg/Iru ADE Manager_0.2.0_aarch64.dmg` — signed (DMG-level staple is a separate step, see below)
 
 ### Verify Gatekeeper acceptance
 ```bash
@@ -198,9 +203,9 @@ Tauri CLI handles `codesign`, `xcrun notarytool submit --wait`, and `xcrun stapl
 ### DMG-level notarization (optional but recommended for distribution)
 Tauri notarizes the `.app` but not the enclosing DMG. Run manually if you want the DMG itself stapled (avoids "downloaded from internet" prompt on first open):
 ```bash
-xcrun notarytool submit "src-tauri/target/release/bundle/dmg/Iru ADE Manager_0.1.0_aarch64.dmg" \
+xcrun notarytool submit "src-tauri/target/release/bundle/dmg/Iru ADE Manager_0.2.0_aarch64.dmg" \
   --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_PASSWORD" --wait
-xcrun stapler staple "src-tauri/target/release/bundle/dmg/Iru ADE Manager_0.1.0_aarch64.dmg"
+xcrun stapler staple "src-tauri/target/release/bundle/dmg/Iru ADE Manager_0.2.0_aarch64.dmg"
 ```
 
 Requires: Apple Developer Program ($99/yr), Developer ID Application certificate in login keychain.

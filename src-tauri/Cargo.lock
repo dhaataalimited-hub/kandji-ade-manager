@@ -1990,7 +1990,7 @@ dependencies = [
 
 [[package]]
 name = "kandji-ade-manager"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "keyring",
