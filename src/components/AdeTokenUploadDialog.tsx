@@ -125,9 +125,11 @@ interface OptionalFields {
 function OptionalFieldsSection({
   fields,
   onChange,
+  defaultOpen = false,
 }: {
   fields: OptionalFields;
   onChange: (f: OptionalFields) => void;
+  defaultOpen?: boolean;
 }) {
   const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
 
@@ -138,7 +140,7 @@ function OptionalFieldsSection({
   }, []);
 
   return (
-    <details className="group">
+    <details className="group" open={defaultOpen}>
       <summary className="text-xs font-medium text-gray-500 cursor-pointer hover:text-gray-800 select-none list-none flex items-center gap-1.5">
         <span className="inline-block transition-transform group-open:rotate-90">
           ▶
@@ -503,20 +505,26 @@ function AddNewTokenWizard({
 function RenewTokenWizard({
   tokenId,
   tokenName,
+  initialBlueprintId = "",
+  initialPhone = "",
+  initialEmail = "",
   onClose,
   onSuccess,
 }: {
   tokenId: string;
   tokenName: string;
+  initialBlueprintId?: string;
+  initialPhone?: string;
+  initialEmail?: string;
   onClose: () => void;
   onSuccess: () => void;
 }) {
   const [step, setStep] = useState(0);
   const [p7mFile, setP7mFile] = useState<File | null>(null);
   const [fields, setFields] = useState<OptionalFields>({
-    blueprintId: "",
-    phone: "",
-    email: "",
+    blueprintId: initialBlueprintId,
+    phone: initialPhone,
+    email: initialEmail,
   });
   const [uploading, setUploading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -626,7 +634,11 @@ function RenewTokenWizard({
                 onFile={setP7mFile}
                 onClear={() => setP7mFile(null)}
               />
-              <OptionalFieldsSection fields={fields} onChange={setFields} />
+              <OptionalFieldsSection
+                fields={fields}
+                onChange={setFields}
+                defaultOpen
+              />
               {error && (
                 <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2 whitespace-pre-wrap break-words">
                   {error}
@@ -676,6 +688,9 @@ interface AdeTokenUploadDialogProps {
   mode: "add" | "renew";
   tokenId?: string;
   tokenName?: string;
+  initialBlueprintId?: string;
+  initialPhone?: string;
+  initialEmail?: string;
   open: boolean;
   onClose: () => void;
   onSuccess: () => void;
@@ -685,6 +700,9 @@ export function AdeTokenUploadDialog({
   mode,
   tokenId,
   tokenName,
+  initialBlueprintId,
+  initialPhone,
+  initialEmail,
   open,
   onClose,
   onSuccess,
@@ -724,6 +742,9 @@ export function AdeTokenUploadDialog({
           <RenewTokenWizard
             tokenId={tokenId!}
             tokenName={tokenName!}
+            initialBlueprintId={initialBlueprintId}
+            initialPhone={initialPhone}
+            initialEmail={initialEmail}
             onClose={onClose}
             onSuccess={onSuccess}
           />

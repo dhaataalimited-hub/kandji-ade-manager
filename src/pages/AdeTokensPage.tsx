@@ -80,6 +80,9 @@ export default function AdeTokensPage() {
   const [renewTarget, setRenewTarget] = useState<{
     id: string;
     name: string;
+    blueprintId: string;
+    phone: string;
+    email: string;
   } | null>(null);
 
   const loadTokens = () => {
@@ -309,6 +312,9 @@ export default function AdeTokensPage() {
                       setRenewTarget({
                         id: token.id,
                         name: token.server_name ?? token.id,
+                        blueprintId: token.blueprint_id ?? "",
+                        phone: token.phone ?? "",
+                        email: token.email ?? "",
                       })
                     }
                     className={
@@ -437,6 +443,9 @@ export default function AdeTokensPage() {
         mode="renew"
         tokenId={renewTarget?.id}
         tokenName={renewTarget?.name}
+        initialBlueprintId={renewTarget?.blueprintId}
+        initialPhone={renewTarget?.phone}
+        initialEmail={renewTarget?.email}
         open={renewTarget !== null}
         onClose={() => setRenewTarget(null)}
         onSuccess={() => {
