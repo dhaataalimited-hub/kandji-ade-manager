@@ -29,9 +29,11 @@ import {
 
 interface TokenWithDevices extends AdeToken {
   expanded: boolean;
-  devices: AdeDevice[] | null;
   devicesLoading: boolean;
   devicesError: string | null;
+  devicePage: number; // currently selected page (1-based)
+  deviceTotalPages: number; // 0 until the first page loads
+  devicePageCache: Record<number, AdeDevice[]>; // page → devices (lazy)
 }
 
 function expiryBadge(daysLeft?: number) {
@@ -107,9 +109,11 @@ export default function AdeTokensPage() {
           data.map((t) => ({
             ...t,
             expanded: false,
-            devices: null,
             devicesLoading: false,
             devicesError: null,
+            devicePage: 1,
+            deviceTotalPages: 0,
+            devicePageCache: {},
           }))
         );
       })
@@ -128,37 +132,40 @@ export default function AdeTokensPage() {
       .catch(() => {});
   }, []);
 
-  const toggleToken = async (idx: number) => {
+  // Fetch a single device page on demand and cache it. Cached pages are shown
+  // instantly; only unseen pages hit the API (Quirk 10: 300 devices/page).
+  const loadDevicePage = async (idx: number, page: number) => {
     const token = tokens[idx];
-    if (token.expanded) {
+    if (token.devicePageCache[page]) {
       setTokens((prev) =>
-        prev.map((t, i) => (i === idx ? { ...t, expanded: false } : t))
-      );
-      return;
-    }
-    if (token.devices !== null) {
-      setTokens((prev) =>
-        prev.map((t, i) => (i === idx ? { ...t, expanded: true } : t))
+        prev.map((t, i) =>
+          i === idx ? { ...t, devicePage: page, devicesError: null } : t
+        )
       );
       return;
     }
     setTokens((prev) =>
       prev.map((t, i) =>
         i === idx
-          ? { ...t, expanded: true, devicesLoading: true, devicesError: null }
+          ? { ...t, devicePage: page, devicesLoading: true, devicesError: null }
           : t
       )
     );
     try {
-      const data = await listAdeTokenDevices(token.id);
+      const result = await listAdeTokenDevices(token.id, page);
       setTokens((prev) =>
         prev.map((t, i) =>
           i === idx
             ? {
                 ...t,
-                devices: Array.isArray(data) ? data : [],
                 devicesLoading: false,
                 devicesError: null,
+                devicePage: result.page,
+                deviceTotalPages: result.total_pages,
+                devicePageCache: {
+                  ...t.devicePageCache,
+                  [result.page]: result.devices,
+                },
               }
             : t
         )
@@ -168,10 +175,27 @@ export default function AdeTokensPage() {
       setTokens((prev) =>
         prev.map((t, i) =>
           i === idx
-            ? { ...t, devices: [], devicesLoading: false, devicesError: message }
+            ? { ...t, devicesLoading: false, devicesError: message }
             : t
         )
       );
+    }
+  };
+
+  const toggleToken = async (idx: number) => {
+    const token = tokens[idx];
+    if (token.expanded) {
+      setTokens((prev) =>
+        prev.map((t, i) => (i === idx ? { ...t, expanded: false } : t))
+      );
+      return;
+    }
+    setTokens((prev) =>
+      prev.map((t, i) => (i === idx ? { ...t, expanded: true } : t))
+    );
+    // Lazily load the first page only on first expand.
+    if (Object.keys(token.devicePageCache).length === 0) {
+      await loadDevicePage(idx, token.devicePage || 1);
     }
   };
 
@@ -199,14 +223,15 @@ export default function AdeTokensPage() {
 
   const handleDeviceSaved = (updated: AdeDevice) => {
     setTokens((prev) =>
-      prev.map((t) => ({
-        ...t,
-        devices: t.devices
-          ? t.devices.map((d) =>
-              d.device_id === updated.device_id ? updated : d
-            )
-          : t.devices,
-      }))
+      prev.map((t) => {
+        const nextCache: Record<number, AdeDevice[]> = {};
+        for (const [page, devs] of Object.entries(t.devicePageCache)) {
+          nextCache[Number(page)] = devs.map((d) =>
+            d.device_id === updated.device_id ? updated : d
+          );
+        }
+        return { ...t, devicePageCache: nextCache };
+      })
     );
     setEditDevice(null);
   };
@@ -266,7 +291,9 @@ export default function AdeTokensPage() {
         </div>
       ) : (
         <div className="space-y-4">
-          {tokens.map((token, idx) => (
+          {tokens.map((token, idx) => {
+            const pageDevices = token.devicePageCache[token.devicePage] ?? null;
+            return (
             <Card key={token.id} className="overflow-hidden">
               {/* ── Token header row ── */}
               <div
@@ -382,11 +409,11 @@ export default function AdeTokensPage() {
                         Failed to load devices: {token.devicesError}
                       </p>
                     </div>
-                  ) : token.devices && token.devices.length > 0 ? (
-                    <div className="overflow-x-auto">
+                  ) : pageDevices && pageDevices.length > 0 ? (
+                    <div className="overflow-x-auto max-h-96 overflow-y-auto">
                       <table className="w-full text-sm">
                         <thead>
-                          <tr className="bg-gray-50">
+                          <tr>
                             {[
                               "Device Name",
                               "Serial",
@@ -399,7 +426,7 @@ export default function AdeTokensPage() {
                             ].map((h) => (
                               <th
                                 key={h}
-                                className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 whitespace-nowrap"
+                                className="sticky top-0 z-10 bg-gray-50 px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 whitespace-nowrap"
                               >
                                 {h}
                               </th>
@@ -407,7 +434,7 @@ export default function AdeTokensPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {token.devices.map((device) => (
+                          {pageDevices.map((device) => (
                             <tr
                               key={device.device_id}
                               className="border-t border-gray-100 hover:bg-gray-50 transition-colors"
@@ -463,10 +490,64 @@ export default function AdeTokensPage() {
                       No devices found for this ADE token.
                     </div>
                   )}
+
+                  {/* ── Compact page selector ── */}
+                  {!token.devicesLoading &&
+                    !token.devicesError &&
+                    token.deviceTotalPages > 1 && (
+                      <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-100 text-xs text-gray-500">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={token.devicePage <= 1}
+                          onClick={() =>
+                            loadDevicePage(idx, token.devicePage - 1)
+                          }
+                        >
+                          Prev
+                        </Button>
+                        <span className="flex items-center gap-1.5">
+                          Page
+                          <input
+                            key={token.devicePage}
+                            type="number"
+                            min={1}
+                            max={token.deviceTotalPages}
+                            defaultValue={token.devicePage}
+                            onKeyDown={(e) => {
+                              if (e.key !== "Enter") return;
+                              const p = Math.min(
+                                Math.max(
+                                  1,
+                                  Number(e.currentTarget.value) || 1
+                                ),
+                                token.deviceTotalPages
+                              );
+                              if (p !== token.devicePage) {
+                                loadDevicePage(idx, p);
+                              }
+                            }}
+                            className="w-14 h-7 rounded-md border border-gray-200 px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          of {token.deviceTotalPages}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={token.devicePage >= token.deviceTotalPages}
+                          onClick={() =>
+                            loadDevicePage(idx, token.devicePage + 1)
+                          }
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    )}
                 </div>
               )}
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
 

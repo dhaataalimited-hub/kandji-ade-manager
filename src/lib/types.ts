@@ -26,6 +26,13 @@ export interface AdeDevice {
   color?: string;
 }
 
+export interface AdeDevicePage {
+  devices: AdeDevice[];
+  page: number;
+  total_pages: number;
+  total_count: number;
+}
+
 export interface Blueprint {
   id: string;
   name: string;

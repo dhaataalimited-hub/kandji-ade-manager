@@ -36,6 +36,15 @@ pub struct AdeDevice {
     pub color: Option<String>,
 }
 
+/// One page of an ADE token's devices plus pagination metadata.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AdeDevicePage {
+    pub devices: Vec<AdeDevice>,
+    pub page: u32,
+    pub total_pages: u32,
+    pub total_count: i64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Blueprint {
     pub id: String,
@@ -335,52 +344,53 @@ pub async fn renew_ade_token(
     Ok(parse_ade_token(&body))
 }
 
-/// List devices for a given ADE token with page-based pagination.
+/// The devices endpoint (Quirk 10) returns a fixed maximum of 300 devices per
+/// page and accepts only the `page` param — page size is not modifiable.
+const DEVICE_PAGE_SIZE: i64 = 300;
+
+/// Fetch a single page of an ADE token's devices, lazily (one page per call).
+/// Returns the page's devices plus pagination metadata so the UI can render a
+/// page selector without loading every page up front.
 #[tauri::command]
-pub async fn list_ade_token_devices(ade_id: String) -> Result<Vec<AdeDevice>, String> {
+pub async fn list_ade_token_devices(ade_id: String, page: u32) -> Result<AdeDevicePage, String> {
     let creds = get_stored_creds()?;
     let token = get_stored_token()?;
     let client = build_client(&token).map_err(|e| e.to_string())?;
     let base = get_base_url(&creds.subdomain, &creds.region);
 
-    let mut all_devices: Vec<AdeDevice> = vec![];
-    let mut page = 1u32;
+    let page = page.max(1);
+    let res = client
+        .get(format!(
+            "{}/integrations/apple/ade/{}/devices?page={}",
+            base, ade_id, page
+        ))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
 
-    loop {
-        let res = client
-            .get(format!(
-                "{}/integrations/apple/ade/{}/devices?page={}",
-                base, ade_id, page
-            ))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        if !res.status().is_success() {
-            let status = res.status().as_u16();
-            let body = res.text().await.unwrap_or_default();
-            return Err(format!("HTTP {}: {}", status, body));
-        }
-
-        let body: Value = res.json().await.map_err(|e| e.to_string())?;
-        // Quirk 10: DRF page pagination. Stop when `next` is null — requesting a
-        // page past the last returns HTTP 404 "Invalid page.", not an empty page.
-        let has_next = body.get("next").map(|n| !n.is_null()).unwrap_or(false);
-        let items = normalize_list(body);
-
-        if items.is_empty() {
-            break;
-        }
-
-        all_devices.extend(items.iter().map(parse_ade_device));
-
-        if !has_next {
-            break;
-        }
-        page += 1;
+    if !res.status().is_success() {
+        let status = res.status().as_u16();
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status, body));
     }
 
-    Ok(all_devices)
+    let body: Value = res.json().await.map_err(|e| e.to_string())?;
+    // DRF envelope: `count` is the total across all pages.
+    let total_count = body.get("count").and_then(|c| c.as_i64()).unwrap_or(0);
+    let total_pages = if total_count <= 0 {
+        1
+    } else {
+        (((total_count + DEVICE_PAGE_SIZE - 1) / DEVICE_PAGE_SIZE) as u32).max(1)
+    };
+    let items = normalize_list(body);
+    let devices = items.iter().map(parse_ade_device).collect();
+
+    Ok(AdeDevicePage {
+        devices,
+        page,
+        total_pages,
+        total_count,
+    })
 }
 
 /// Get all blueprints for UUID → name resolution.
