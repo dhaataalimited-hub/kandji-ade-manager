@@ -10,6 +10,7 @@ import type { AdeToken, AdeDevice, Blueprint } from "../lib/types";
 import {
   listAdeTokens,
   listAdeTokenDevices,
+  searchAdeDevicesBySerial,
   getBlueprints,
   deleteAdeToken,
 } from "../api/kandji";
@@ -25,12 +26,21 @@ import {
   Monitor,
   Plus,
   Trash2,
+  Search,
+  X,
 } from "lucide-react";
 
 interface TokenWithDevices extends AdeToken {
   expanded: boolean;
-  devices: AdeDevice[] | null;
   devicesLoading: boolean;
+  devicesError: string | null;
+  devicePage: number; // currently selected page (1-based)
+  deviceTotalPages: number; // 0 until the first page loads
+  devicePageCache: Record<number, AdeDevice[]>; // page → devices (lazy)
+  searchInput: string; // serial search box text
+  searchResults: AdeDevice[] | null; // null = no active search
+  searchLoading: boolean;
+  searchError: string | null;
 }
 
 function expiryBadge(daysLeft?: number) {
@@ -66,6 +76,18 @@ function resolveBlueprintName(
   return blueprintMap.get(blueprintId) ?? shortenUuid(blueprintId);
 }
 
+function profileStatusBadge(status?: string) {
+  if (!status) return <span className="text-gray-400">—</span>;
+  const s = status.toLowerCase();
+  const classes =
+    s === "pushed"
+      ? "bg-green-100 text-green-700 border-green-200"
+      : s === "assigned"
+        ? "bg-blue-100 text-blue-700 border-blue-200"
+        : "bg-gray-100 text-gray-600 border-gray-200";
+  return <Badge className={classes}>{status}</Badge>;
+}
+
 export default function AdeTokensPage() {
   const [tokens, setTokens] = useState<TokenWithDevices[]>([]);
   const [blueprintMap, setBlueprintMap] = useState<Map<string, string>>(
@@ -80,6 +102,9 @@ export default function AdeTokensPage() {
   const [renewTarget, setRenewTarget] = useState<{
     id: string;
     name: string;
+    blueprintId: string;
+    phone: string;
+    email: string;
   } | null>(null);
 
   const loadTokens = () => {
@@ -91,8 +116,15 @@ export default function AdeTokensPage() {
           data.map((t) => ({
             ...t,
             expanded: false,
-            devices: null,
             devicesLoading: false,
+            devicesError: null,
+            devicePage: 1,
+            deviceTotalPages: 0,
+            devicePageCache: {},
+            searchInput: "",
+            searchResults: null,
+            searchLoading: false,
+            searchError: null,
           }))
         );
       })
@@ -111,6 +143,56 @@ export default function AdeTokensPage() {
       .catch(() => {});
   }, []);
 
+  // Fetch a single device page on demand and cache it. Cached pages are shown
+  // instantly; only unseen pages hit the API (Quirk 10: 300 devices/page).
+  const loadDevicePage = async (idx: number, page: number) => {
+    const token = tokens[idx];
+    if (token.devicePageCache[page]) {
+      setTokens((prev) =>
+        prev.map((t, i) =>
+          i === idx ? { ...t, devicePage: page, devicesError: null } : t
+        )
+      );
+      return;
+    }
+    setTokens((prev) =>
+      prev.map((t, i) =>
+        i === idx
+          ? { ...t, devicePage: page, devicesLoading: true, devicesError: null }
+          : t
+      )
+    );
+    try {
+      const result = await listAdeTokenDevices(token.id, page);
+      setTokens((prev) =>
+        prev.map((t, i) =>
+          i === idx
+            ? {
+                ...t,
+                devicesLoading: false,
+                devicesError: null,
+                devicePage: result.page,
+                deviceTotalPages: result.total_pages,
+                devicePageCache: {
+                  ...t.devicePageCache,
+                  [result.page]: result.devices,
+                },
+              }
+            : t
+        )
+      );
+    } catch (e: unknown) {
+      const message = typeof e === "string" ? e : (e as Error).message;
+      setTokens((prev) =>
+        prev.map((t, i) =>
+          i === idx
+            ? { ...t, devicesLoading: false, devicesError: message }
+            : t
+        )
+      );
+    }
+  };
+
   const toggleToken = async (idx: number) => {
     const token = tokens[idx];
     if (token.expanded) {
@@ -119,41 +201,73 @@ export default function AdeTokensPage() {
       );
       return;
     }
-    if (token.devices !== null) {
-      setTokens((prev) =>
-        prev.map((t, i) => (i === idx ? { ...t, expanded: true } : t))
-      );
+    setTokens((prev) =>
+      prev.map((t, i) => (i === idx ? { ...t, expanded: true } : t))
+    );
+    // Lazily load the first page only on first expand.
+    if (Object.keys(token.devicePageCache).length === 0) {
+      await loadDevicePage(idx, token.devicePage || 1);
+    }
+  };
+
+  const setSearchInput = (idx: number, value: string) => {
+    setTokens((prev) =>
+      prev.map((t, i) => (i === idx ? { ...t, searchInput: value } : t))
+    );
+  };
+
+  // Serial search hits the tenant-wide devices endpoint (no server-side search
+  // exists on the per-token list) and replaces the table with the results.
+  const runDeviceSearch = async (idx: number) => {
+    const query = tokens[idx].searchInput.trim();
+    if (!query) {
+      clearDeviceSearch(idx);
       return;
     }
     setTokens((prev) =>
       prev.map((t, i) =>
-        i === idx ? { ...t, expanded: true, devicesLoading: true } : t
+        i === idx ? { ...t, searchLoading: true, searchError: null } : t
       )
     );
     try {
-      const data = await listAdeTokenDevices(token.id);
+      const results = await searchAdeDevicesBySerial(query, tokens[idx].id);
       setTokens((prev) =>
         prev.map((t, i) =>
           i === idx
-            ? {
-                ...t,
-                devices: Array.isArray(data) ? data : [],
-                devicesLoading: false,
-              }
+            ? { ...t, searchLoading: false, searchResults: results }
             : t
         )
       );
-    } catch {
+    } catch (e: unknown) {
+      const message = typeof e === "string" ? e : (e as Error).message;
       setTokens((prev) =>
         prev.map((t, i) =>
-          i === idx ? { ...t, devices: [], devicesLoading: false } : t
+          i === idx
+            ? { ...t, searchLoading: false, searchError: message }
+            : t
         )
       );
     }
   };
 
+  const clearDeviceSearch = (idx: number) => {
+    setTokens((prev) =>
+      prev.map((t, i) =>
+        i === idx
+          ? {
+              ...t,
+              searchInput: "",
+              searchResults: null,
+              searchError: null,
+              searchLoading: false,
+            }
+          : t
+      )
+    );
+  };
+
   const handleDeleteToken = async (token: TokenWithDevices) => {
-    const name = token.server_name ?? token.mdm_server_name ?? token.id;
+    const name = token.server_name ?? token.id;
     const confirmed = await ask(
       `Are you sure you want to remove the ADE token "${name}"?\n\nThis will delete the integration from Iru. Enrolled devices will not be affected.`,
       { title: "Remove ADE Token", kind: "warning" }
@@ -176,14 +290,20 @@ export default function AdeTokensPage() {
 
   const handleDeviceSaved = (updated: AdeDevice) => {
     setTokens((prev) =>
-      prev.map((t) => ({
-        ...t,
-        devices: t.devices
-          ? t.devices.map((d) =>
+      prev.map((t) => {
+        const nextCache: Record<number, AdeDevice[]> = {};
+        for (const [page, devs] of Object.entries(t.devicePageCache)) {
+          nextCache[Number(page)] = devs.map((d) =>
+            d.device_id === updated.device_id ? updated : d
+          );
+        }
+        const nextSearch = t.searchResults
+          ? t.searchResults.map((d) =>
               d.device_id === updated.device_id ? updated : d
             )
-          : t.devices,
-      }))
+          : t.searchResults;
+        return { ...t, devicePageCache: nextCache, searchResults: nextSearch };
+      })
     );
     setEditDevice(null);
   };
@@ -243,7 +363,19 @@ export default function AdeTokensPage() {
         </div>
       ) : (
         <div className="space-y-4">
-          {tokens.map((token, idx) => (
+          {tokens.map((token, idx) => {
+            const pageDevices = token.devicePageCache[token.devicePage] ?? null;
+            const isSearching = token.searchResults !== null;
+            const displayDevices = isSearching
+              ? token.searchResults
+              : pageDevices;
+            const displayLoading = isSearching
+              ? token.searchLoading
+              : token.devicesLoading;
+            const displayError = isSearching
+              ? token.searchError
+              : token.devicesError;
+            return (
             <Card key={token.id} className="overflow-hidden">
               {/* ── Token header row ── */}
               <div
@@ -259,7 +391,7 @@ export default function AdeTokensPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="font-semibold text-gray-900">
-                      {token.server_name ?? token.mdm_server_name ?? token.id}
+                      {token.server_name ?? token.id}
                     </h3>
                     {expiryBadge(token.days_left)}
                   </div>
@@ -268,10 +400,10 @@ export default function AdeTokensPage() {
                       <Monitor className="w-3 h-3" />
                       {token.device_count ?? 0} devices
                     </span>
-                    {token.last_modified && (
+                    {token.last_device_sync && (
                       <span className="flex items-center gap-1 text-xs text-gray-500">
                         <RefreshCw className="w-3 h-3" />
-                        Modified {formatRelativeDate(token.last_modified)}
+                        Last sync {formatRelativeDate(token.last_device_sync)}
                       </span>
                     )}
                     {token.access_token_expiry && (
@@ -308,10 +440,10 @@ export default function AdeTokensPage() {
                     onClick={() =>
                       setRenewTarget({
                         id: token.id,
-                        name:
-                          token.server_name ??
-                          token.mdm_server_name ??
-                          token.id,
+                        name: token.server_name ?? token.id,
+                        blueprintId: token.blueprint_id ?? "",
+                        phone: token.phone ?? "",
+                        email: token.email ?? "",
                       })
                     }
                     className={
@@ -348,27 +480,78 @@ export default function AdeTokensPage() {
               {/* ── Expanded devices table ── */}
               {token.expanded && (
                 <div className="border-t border-gray-100">
-                  {token.devicesLoading ? (
+                  {/* ── Serial search ── */}
+                  <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-100">
+                    <div className="relative flex-1 max-w-xs">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                      <input
+                        type="text"
+                        value={token.searchInput}
+                        placeholder="Search by serial number…"
+                        onChange={(e) => setSearchInput(idx, e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") runDeviceSearch(idx);
+                        }}
+                        className="w-full h-8 rounded-md border border-gray-200 pl-8 pr-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={token.searchLoading || !token.searchInput.trim()}
+                      onClick={() => runDeviceSearch(idx)}
+                    >
+                      {token.searchLoading ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        "Search"
+                      )}
+                    </Button>
+                    {isSearching && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => clearDeviceSearch(idx)}
+                        className="text-gray-400 hover:text-gray-700"
+                      >
+                        <X className="w-3.5 h-3.5 mr-1" />
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+
+                  {displayLoading ? (
                     <div className="flex items-center justify-center gap-2 py-10 text-sm text-gray-500">
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      Loading devices…
+                      {isSearching ? "Searching…" : "Loading devices…"}
                     </div>
-                  ) : token.devices && token.devices.length > 0 ? (
-                    <div className="overflow-x-auto">
+                  ) : displayError ? (
+                    <div className="px-4 py-6">
+                      <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2 whitespace-pre-wrap break-words">
+                        {isSearching
+                          ? "Search failed: "
+                          : "Failed to load devices: "}
+                        {displayError}
+                      </p>
+                    </div>
+                  ) : displayDevices && displayDevices.length > 0 ? (
+                    <div className="overflow-x-auto max-h-96 overflow-y-auto">
                       <table className="w-full text-sm">
                         <thead>
-                          <tr className="bg-gray-50">
+                          <tr>
                             {[
+                              "Device Name",
                               "Serial",
                               "Model",
+                              "Type",
                               "Asset Tag",
-                              "User",
+                              "Profile Status",
                               "Blueprint",
                               "",
                             ].map((h) => (
                               <th
                                 key={h}
-                                className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 whitespace-nowrap"
+                                className="sticky top-0 z-10 bg-gray-50 px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 whitespace-nowrap"
                               >
                                 {h}
                               </th>
@@ -376,11 +559,14 @@ export default function AdeTokensPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {token.devices.map((device) => (
+                          {displayDevices.map((device) => (
                             <tr
                               key={device.device_id}
                               className="border-t border-gray-100 hover:bg-gray-50 transition-colors"
                             >
+                              <td className="px-4 py-3 text-sm text-gray-700">
+                                {device.name ?? "—"}
+                              </td>
                               <td className="px-4 py-3">
                                 <span className="font-mono text-xs text-gray-500">
                                   {device.serial_number}
@@ -389,11 +575,19 @@ export default function AdeTokensPage() {
                               <td className="px-4 py-3 text-sm text-gray-700">
                                 {device.model ?? "—"}
                               </td>
+                              <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                {device.device_family ?? "—"}
+                                {device.os && (
+                                  <span className="block text-[10px] text-gray-400">
+                                    {device.os}
+                                  </span>
+                                )}
+                              </td>
                               <td className="px-4 py-3 text-xs text-gray-500">
                                 {device.asset_tag || "—"}
                               </td>
-                              <td className="px-4 py-3 text-xs text-gray-500">
-                                {device.user || "—"}
+                              <td className="px-4 py-3">
+                                {profileStatusBadge(device.profile_status)}
                               </td>
                               <td className="px-4 py-3 text-xs text-gray-500">
                                 {resolveBlueprintName(
@@ -418,13 +612,70 @@ export default function AdeTokensPage() {
                     </div>
                   ) : (
                     <div className="py-10 text-center text-sm text-gray-400">
-                      No devices found for this ADE token.
+                      {isSearching
+                        ? `No devices found for serial "${token.searchInput.trim()}".`
+                        : "No devices found for this ADE token."}
                     </div>
                   )}
+
+                  {/* ── Compact page selector (hidden while searching) ── */}
+                  {!isSearching &&
+                    !token.devicesLoading &&
+                    !token.devicesError &&
+                    token.deviceTotalPages > 1 && (
+                      <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-100 text-xs text-gray-500">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={token.devicePage <= 1}
+                          onClick={() =>
+                            loadDevicePage(idx, token.devicePage - 1)
+                          }
+                        >
+                          Prev
+                        </Button>
+                        <span className="flex items-center gap-1.5">
+                          Page
+                          <input
+                            key={token.devicePage}
+                            type="number"
+                            min={1}
+                            max={token.deviceTotalPages}
+                            defaultValue={token.devicePage}
+                            onKeyDown={(e) => {
+                              if (e.key !== "Enter") return;
+                              const p = Math.min(
+                                Math.max(
+                                  1,
+                                  Number(e.currentTarget.value) || 1
+                                ),
+                                token.deviceTotalPages
+                              );
+                              if (p !== token.devicePage) {
+                                loadDevicePage(idx, p);
+                              }
+                            }}
+                            className="w-14 h-7 rounded-md border border-gray-200 px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          of {token.deviceTotalPages}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={token.devicePage >= token.deviceTotalPages}
+                          onClick={() =>
+                            loadDevicePage(idx, token.devicePage + 1)
+                          }
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    )}
                 </div>
               )}
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -440,6 +691,9 @@ export default function AdeTokensPage() {
         mode="renew"
         tokenId={renewTarget?.id}
         tokenName={renewTarget?.name}
+        initialBlueprintId={renewTarget?.blueprintId}
+        initialPhone={renewTarget?.phone}
+        initialEmail={renewTarget?.email}
         open={renewTarget !== null}
         onClose={() => setRenewTarget(null)}
         onSuccess={() => {

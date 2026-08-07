@@ -24,6 +24,7 @@ pub fn run() {
             upload_ade_token,
             renew_ade_token,
             list_ade_token_devices,
+            search_ade_devices_by_serial,
             get_blueprints,
             update_ade_device,
             delete_ade_token,

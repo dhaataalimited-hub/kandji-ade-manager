@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AdeToken,
   AdeDevice,
+  AdeDevicePage,
   Blueprint,
   Credentials,
   HealthResult,
@@ -79,8 +80,18 @@ export function renewAdeToken(
   });
 }
 
-export function listAdeTokenDevices(adeId: string): Promise<AdeDevice[]> {
-  return invoke<AdeDevice[]>("list_ade_token_devices", { adeId });
+export function listAdeTokenDevices(
+  adeId: string,
+  page: number
+): Promise<AdeDevicePage> {
+  return invoke<AdeDevicePage>("list_ade_token_devices", { adeId, page });
+}
+
+export function searchAdeDevicesBySerial(
+  serial: string,
+  adeId: string
+): Promise<AdeDevice[]> {
+  return invoke<AdeDevice[]>("search_ade_devices_by_serial", { serial, adeId });
 }
 
 export function getBlueprints(): Promise<Blueprint[]> {
